@@ -8,6 +8,7 @@ using Replay.Unreal.Bunches.Payload;
 using Replay.Unreal.Channels;
 using Replay.Unreal.PackageMap;
 using Replay.Unreal.Parsing;
+using Replay.Unreal.Readers;
 
 namespace Replay.Unreal.Tests.Bunches;
 
@@ -15,6 +16,43 @@ public class ContentBlockFramerTests
 {
     private const string TestPath = "/Game/Test.Test_C";
     private const string ReplayVersion = "++Ares-Core+release-12.11";
+
+    [Test]
+    public void FrameContentBlocks_RawMode_EmitsFieldWithoutDescriptor()
+    {
+        var cache = new NetGuidCache();
+        cache.AddExportGroup(new NetFieldExportGroup
+        {
+            PathName = TestPath,
+            PathNameIndex = 1,
+            NetFieldExports = [new NetFieldExport { Handle = 0, Name = "FieldA", CompatibleChecksum = 0 }],
+        });
+        var sink = new CapturingReplayEventSink();
+        using var context = new ReplayReaderContext(new FBinaryArchive(ReadOnlyMemory<byte>.Empty), sink,
+            parseProfile: new ParseProfile { EmitRawPayloads = true }, netGuidCache: cache);
+        var framer = new ContentBlockFramer(new PackageMapReader(cache), context);
+        var bits = new List<bool> { false };
+        WriteIntPacked(bits, 1);
+        WriteIntPacked(bits, 3);
+        bits.AddRange([true, false, true]);
+        WriteIntPacked(bits, 0);
+        var payload = BuildRawContentBlockPayload(bits);
+
+        framer.FrameContentBlocks(payload, CreateKnownActorChannel(), new BunchPayloadStats(), 2.5f, 7, ReplayVersion);
+
+        Assert.That(sink.Events, Has.Count.EqualTo(2));
+        Assert.That(sink.Events[0], Is.TypeOf<RawContentBlockReceived>());
+        var field = (RawFieldReceived)sink.Events[1];
+        Assert.Multiple(() =>
+        {
+            Assert.That(field.Name, Is.EqualTo("FieldA"));
+            Assert.That(field.Handle, Is.EqualTo(0));
+            Assert.That(field.PayloadBits, Is.EqualTo(3));
+            Assert.That(field.Payload, Is.EqualTo(new byte[] { 5 }));
+            Assert.That(field.ActorNetGuid, Is.EqualTo(100));
+            Assert.That(field.PacketId, Is.EqualTo(7));
+        });
+    }
 
     [Test]
     public void FrameContentBlocks_UnknownClassPath_SkipsWithoutDecoding()
@@ -184,6 +222,14 @@ public class ContentBlockFramerTests
     private static FBitArchive BuildContentBlockPayload(bool hasRepLayout, int contentBitCount)
     {
         return BuildContentBlockPayload((hasRepLayout, contentBitCount));
+    }
+
+    private static FBitArchive BuildRawContentBlockPayload(List<bool> contentBits)
+    {
+        var bits = new List<bool> { true, true };
+        WriteIntPacked(bits, (uint)contentBits.Count);
+        bits.AddRange(contentBits);
+        return new BitArchiveReader(PackBits(bits), bits.Count);
     }
 
     private static FBitArchive BuildContentBlockPayload(params (bool HasRepLayout, int ContentBitCount)[] blocks)

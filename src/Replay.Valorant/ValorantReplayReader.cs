@@ -25,6 +25,12 @@ namespace Replay.Valorant;
 /// </remarks>
 public sealed class ValorantReplayReader
 {
+    private static readonly IReadOnlySet<string> PlayerControllerPaths =
+        new HashSet<string>(StringComparer.Ordinal)
+        {
+            "/Game/Characters/_Core/BaseReplayController",
+            "/Game/Characters/_Core/BaseReplayController.BaseReplayController_C",
+        };
     private const ushort ExpectedReplayMajorVersion = 5;
     private const ushort ExpectedReplayMinorVersion = 3;
     private const ushort ExpectedReplayPatchVersion = 2;
@@ -254,7 +260,8 @@ public sealed class ValorantReplayReader
             SnapshotParseProfile(_parseProfile),
             _loggerFactory,
             netGuidCache,
-            replayReleaseVersion: replayReleaseVersion);
+            replayReleaseVersion: replayReleaseVersion,
+            playerControllerPaths: PlayerControllerPaths);
         context.ReplayInfo = metadata.ReplayInfo;
         context.ReplayInfoSerializationMetadata = metadata.ReplayInfoSerializationMetadata;
         context.ReplayHeader = metadata.ReplayHeader;
@@ -280,6 +287,7 @@ public sealed class ValorantReplayReader
         ExcludedPaths = SnapshotSet(profile.ExcludedPaths),
         IncludedFields = SnapshotSet(profile.IncludedFields),
         CaptureDiagnosticFields = profile.CaptureDiagnosticFields,
+        EmitRawPayloads = profile.EmitRawPayloads,
     };
 
     private static HashSet<string>? SnapshotSet(HashSet<string>? values) =>

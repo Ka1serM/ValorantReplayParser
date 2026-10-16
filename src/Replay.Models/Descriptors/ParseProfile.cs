@@ -7,6 +7,7 @@ public sealed class ParseProfile
     public HashSet<string>? ExcludedPaths { get; init; }
     public HashSet<string>? IncludedFields { get; init; }
     public bool CaptureDiagnosticFields { get; init; }
+    public bool EmitRawPayloads { get; init; }
 
     public static ParseProfile Default { get; } = new()
     {

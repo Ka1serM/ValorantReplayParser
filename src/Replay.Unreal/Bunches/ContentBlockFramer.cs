@@ -25,6 +25,7 @@ internal sealed class ContentBlockFramer
     private readonly ILoggerFactory? _loggerFactory;
     private readonly ReplayDiagnosticCollector? _diagnostics;
     private readonly ReplayReleaseVersion? _replayReleaseVersion;
+    private readonly bool _emitRawPayloads;
 
     public ContentBlockFramer(
         PackageMapReader packageMapReader,
@@ -57,7 +58,8 @@ internal sealed class ContentBlockFramer
             propertyPayloadDecoder,
             context.LoggerFactory,
             context.Diagnostics,
-            context.ReplayReleaseVersion)
+            context.ReplayReleaseVersion,
+            context.ParseProfile.EmitRawPayloads)
     {
     }
 
@@ -70,7 +72,8 @@ internal sealed class ContentBlockFramer
         IPropertyPayloadDecoder? propertyPayloadDecoder,
         ILoggerFactory? loggerFactory,
         ReplayDiagnosticCollector? diagnostics = null,
-        ReplayReleaseVersion? replayReleaseVersion = null)
+        ReplayReleaseVersion? replayReleaseVersion = null,
+        bool emitRawPayloads = false)
     {
         _headerReader = new ContentBlockHeaderReader(packageMapReader);
         _netGuidCache = netGuidCache;
@@ -82,6 +85,7 @@ internal sealed class ContentBlockFramer
         _loggerFactory = loggerFactory;
         _diagnostics = diagnostics;
         _replayReleaseVersion = replayReleaseVersion ?? _bindingRegistry.ReleaseVersion;
+        _emitRawPayloads = emitRawPayloads;
     }
 
     public void FrameContentBlocks(
@@ -99,11 +103,26 @@ internal sealed class ContentBlockFramer
 
             if (header.IsDeleted)
             {
+                if (_emitRawPayloads)
+                {
+                    EmitRawBlock(header, channel, timeSeconds, packetId, ResolveDeletedObjectPath(header));
+                    stats.DeletedContentBlockCount++;
+                    stats.ContentBlockCount++;
+                    continue;
+                }
                 HandleDeletedContentBlock(header, channel, timeSeconds, packetId, stats);
                 continue;
             }
 
             var contentPayloadBitCount = ReadContentPayloadBitCount(payload);
+
+            if (_emitRawPayloads)
+            {
+                FrameRawContentBlock(payload, contentPayloadBitCount, header, channel, timeSeconds, packetId,
+                    replayVersionBranch, stats);
+                stats.ContentBlockCount++;
+                continue;
+            }
 
             if (header.HasRepLayout)
             {
@@ -134,6 +153,106 @@ internal sealed class ContentBlockFramer
         }
 
         return _propertyPayloadDecoder.Decode(payload, bitCount, channel.ActorNetGuid.Value, replayVersionBranch);
+    }
+
+    private void FrameRawContentBlock(FBitArchive payload, int payloadBits, ContentBlockHeader header,
+        ActorChannelState channel, float timeSeconds, int packetId, string replayVersionBranch, BunchPayloadStats stats)
+    {
+        var path = header.HasRepLayout
+            ? _pathResolver.ResolveExportGroupPath(header, channel)
+            : _pathResolver.ResolveClassPath(header, channel);
+        EmitRawBlock(header, channel, timeSeconds, packetId, path);
+        using var decoded = DecodeContentPayload(payload, payloadBits, channel, replayVersionBranch);
+        if (header.HasRepLayout)
+            FrameRawProperties(decoded, header, channel, timeSeconds, packetId, path);
+        else
+            FrameRawRpcs(decoded, header, channel, timeSeconds, packetId, path);
+        stats.ContentPayloadBitsParsed += decoded.BitLength;
+    }
+
+    private void EmitRawBlock(ContentBlockHeader header, ActorChannelState channel, float timeSeconds, int packetId,
+        string? path) =>
+        _eventSink.Emit(new RawContentBlockReceived(timeSeconds, packetId, channel.ChannelIndex,
+            channel.ActorNetGuid.Value, GetObjectNetGuid(header, channel).Value, header.ClassNetGuid.Value,
+            header.OuterNetGuid.Value, header.IsActor, header.HasRepLayout, header.IsDeleted, header.DeleteFlags, path));
+
+    private void FrameRawProperties(FBitArchive payload, ContentBlockHeader header, ActorChannelState channel,
+        float timeSeconds, int packetId, string? path)
+    {
+        _ = payload.ReadBit();
+        _netGuidCache.ExportGroupsByPath.TryGetValue(path ?? string.Empty, out var group);
+        while (!payload.AtEnd)
+        {
+            var encodedHandle = payload.ReadIntPacked();
+            if (encodedHandle == 0)
+            {
+                EmitUnframedRemainder(payload, header, channel, timeSeconds, packetId, path, true,
+                    "RepLayout custom delta or trailing payload");
+                return;
+            }
+
+            var handle = checked((int)(encodedHandle - 1));
+            var bitCount = checked((int)payload.ReadIntPacked());
+            var bytes = payload.ReadBits(bitCount).ToArray();
+            var name = (uint)handle < group?.NetFieldExportsLength ? group.NetFieldExports[handle]?.Name : null;
+            _eventSink.Emit(new RawFieldReceived(timeSeconds, packetId, channel.ChannelIndex,
+                channel.ActorNetGuid.Value, GetObjectNetGuid(header, channel).Value, path, handle, name, bytes, bitCount));
+        }
+    }
+
+    private void FrameRawRpcs(FBitArchive payload, ContentBlockHeader header, ActorChannelState channel,
+        float timeSeconds, int packetId, string? path)
+    {
+        if (path is null || !_netGuidCache.ExportGroupsByPath.TryGetValue(path, out var group))
+        {
+            EmitUnframedRemainder(payload, header, channel, timeSeconds, packetId, path, false,
+                "Class net cache export group is unavailable");
+            return;
+        }
+
+        var handleLimit = checked((int)Math.Max(group.NetFieldExportsLength, 2));
+        var invocations = new List<RawRpcReceived>();
+        RawUnframedPayloadReceived? trailing = null;
+        try
+        {
+            while (!payload.AtEnd)
+            {
+                var handle = checked((int)payload.ReadSerializedInt(handleLimit));
+                if (payload.BitsRemaining < 8)
+                {
+                    var remainingBits = checked((int)payload.BitsRemaining);
+                    trailing = new RawUnframedPayloadReceived(timeSeconds, packetId, channel.ChannelIndex,
+                        channel.ActorNetGuid.Value, GetObjectNetGuid(header, channel).Value, path, false,
+                        "Class net cache trailing bits", payload.ReadBits(remainingBits).ToArray(), remainingBits);
+                    break;
+                }
+
+                var bitCount = checked((int)payload.ReadIntPacked());
+                var bytes = payload.ReadBits(bitCount).ToArray();
+                var name = (uint)handle < group.NetFieldExportsLength ? group.NetFieldExports[handle]?.Name : null;
+                invocations.Add(new RawRpcReceived(timeSeconds, packetId, channel.ChannelIndex,
+                    channel.ActorNetGuid.Value, GetObjectNetGuid(header, channel).Value, path, handle, name, bytes, bitCount));
+            }
+        }
+        catch (Exception exception) when (exception is ArchiveReadException or OverflowException)
+        {
+            payload.SeekBits(0);
+            EmitUnframedRemainder(payload, header, channel, timeSeconds, packetId, path, false,
+                "Class net cache function framing is unsupported");
+            return;
+        }
+        foreach (var invocation in invocations) _eventSink.Emit(invocation);
+        if (trailing is not null) _eventSink.Emit(trailing);
+    }
+
+    private void EmitUnframedRemainder(FBitArchive payload, ContentBlockHeader header, ActorChannelState channel,
+        float timeSeconds, int packetId, string? path, bool hasRepLayout, string reason)
+    {
+        var bitCount = checked((int)payload.BitsRemaining);
+        if (bitCount == 0) return;
+        _eventSink.Emit(new RawUnframedPayloadReceived(timeSeconds, packetId, channel.ChannelIndex,
+            channel.ActorNetGuid.Value, GetObjectNetGuid(header, channel).Value, path, hasRepLayout, reason,
+            payload.ReadBits(bitCount).ToArray(), bitCount));
     }
 
     private static void RecordHeaderStats(ContentBlockHeader header, BunchPayloadStats stats)

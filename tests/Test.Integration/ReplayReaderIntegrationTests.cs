@@ -111,6 +111,27 @@ public class ReplayReaderIntegrationTests
         });
     }
 
+    [TestCase("5c673443-5bdc-4576-b416-aab3f62471a5.12_11.vrf")]
+    [TestCase(Replay13_00)]
+    public void ReadRawPayloads_EmitsDescriptorIndependentFields(string replayFile)
+    {
+        var eventSink = new CountingRawEventSink();
+        var profile = new ParseProfile { EnabledCategories = ExportCategory.None, EmitRawPayloads = true };
+        var bytes = TestHelper.ReadReplayBytes(replayFile);
+
+        new ValorantReplayReader(eventSink: eventSink, parseProfile: profile,
+            descriptorCatalog: new DescriptorCatalog()).Read(new FBinaryArchive(bytes));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(eventSink.GroupCount, Is.GreaterThan(0));
+            Assert.That(eventSink.BlockCount, Is.GreaterThan(0));
+            Assert.That(eventSink.FieldCount, Is.GreaterThan(0));
+            Assert.That(eventSink.RpcCount, Is.GreaterThan(0));
+            Assert.That(eventSink.ActorCount, Is.GreaterThan(0));
+        });
+    }
+
     [TestCase(false)]
     [TestCase(true)]
     public void Read_ConsumerSinkExceptionIdentityIsPreserved(bool archiveReadException)
@@ -367,6 +388,27 @@ public class ReplayReaderIntegrationTests
         public List<ReplayEvent> Events { get; } = [];
 
         public void Emit(ReplayEvent replayEvent) => Events.Add(replayEvent);
+    }
+
+    private sealed class CountingRawEventSink : IReplayEventSink
+    {
+        public int GroupCount { get; private set; }
+        public int BlockCount { get; private set; }
+        public int FieldCount { get; private set; }
+        public int RpcCount { get; private set; }
+        public int ActorCount { get; private set; }
+
+        public void Emit(ReplayEvent replayEvent)
+        {
+            switch (replayEvent)
+            {
+                case NetFieldExportGroupChanged: GroupCount++; break;
+                case RawContentBlockReceived: BlockCount++; break;
+                case RawFieldReceived: FieldCount++; break;
+                case RawRpcReceived: RpcCount++; break;
+                case ActorSpawned: ActorCount++; break;
+            }
+        }
     }
 
     private sealed class ThrowingReplayEventSink(Exception exception) : IReplayEventSink

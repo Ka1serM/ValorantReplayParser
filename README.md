@@ -75,6 +75,8 @@ Events are streamed to the sink and are provisional until `Read` returns success
 
 ## High-level gameplay events
 
+Set `ParseProfile.EmitRawPayloads = true` to receive ordered wire events through `IReplayEventSink`. This mode emits `NetFieldExportGroupChanged`, `RawContentBlockReceived`, `RawFieldReceived`, `RawRpcReceived`, and `RawUnframedPayloadReceived`, together with actor and NetGUID events. Field and RPC payloads contain bytes plus their exact bit counts. Export groups supply field names by handle. Raw framing works with an empty `DescriptorCatalog`; it does not decode gameplay fields. A `RawUnframedPayloadReceived` event preserves a bounded payload when the parser cannot frame it into fields or RPCs. Raw mode replaces `ExportGroupReceived` and `RpcReceived` events for content blocks, so use a separate read for typed gameplay events.
+
 The event-project split is a breaking change in the current development version. See the [Unreleased migration guide](CHANGELOG.md#unreleased) for package and namespace changes, removed APIs, and the new enrichment lifecycle.
 
 The core parser emits only `ActorSpawned`, `ActorClosed`, `ExportGroupReceived`, `RpcReceived`, and `NetGuidExported`. Movement batches and effect RPC parameters remain native payloads. Object-reference fields, including damage `EquippableUsed`, expose `NetObjectReference` with the recorded `NetGuid` and its `Path` resolved at decode time; an unknown path is null. Nullable reference fields distinguish an absent update (null) from a recorded null object (`NetGuid == 0`).

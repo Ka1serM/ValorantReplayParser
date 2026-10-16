@@ -13,7 +13,8 @@ internal sealed class ReadNetPlayerIndexStage : IBunchPayloadStage
             return BunchStageResult.Continue;
         }
 
-        if (context.Channel is not null && IsPlayerController(context.Channel, context.ReaderContext.ExportBindingRegistry))
+        if (context.Channel is not null && IsPlayerController(context.Channel,
+            context.ReaderContext.ExportBindingRegistry, context.ReaderContext.PlayerControllerPaths))
         {
             _ = context.Payload.ReadByte();
         }
@@ -21,15 +22,18 @@ internal sealed class ReadNetPlayerIndexStage : IBunchPayloadStage
         return BunchStageResult.Continue;
     }
 
-    private static bool IsPlayerController(ActorChannelState channel, ExportBindingRegistry bindingRegistry)
+    private static bool IsPlayerController(ActorChannelState channel, ExportBindingRegistry bindingRegistry,
+        IReadOnlySet<string>? playerControllerPaths)
     {
-        return IsPlayerControllerPath(channel.ReplicationClassPath, bindingRegistry)
-            || IsPlayerControllerPath(channel.ArchetypePath, bindingRegistry)
-            || IsPlayerControllerPath(channel.ActorPath, bindingRegistry);
+        return IsPlayerControllerPath(channel.ReplicationClassPath, bindingRegistry, playerControllerPaths)
+            || IsPlayerControllerPath(channel.ArchetypePath, bindingRegistry, playerControllerPaths)
+            || IsPlayerControllerPath(channel.ActorPath, bindingRegistry, playerControllerPaths);
     }
 
-    private static bool IsPlayerControllerPath(string? path, ExportBindingRegistry bindingRegistry)
+    private static bool IsPlayerControllerPath(string? path, ExportBindingRegistry bindingRegistry,
+        IReadOnlySet<string>? playerControllerPaths)
     {
-        return path is not null && bindingRegistry.GetExportGroupKind(path) == ExportGroupKind.PlayerController;
+        return path is not null && (playerControllerPaths?.Contains(path) == true ||
+            bindingRegistry.GetExportGroupKind(path) == ExportGroupKind.PlayerController);
     }
 }

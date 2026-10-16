@@ -65,7 +65,7 @@ internal sealed class PlaybackPacketReader
             _archive,
             _context.NetGuidCache,
             _context.LoggerFactory?.CreateLogger<ExportDataReader>(),
-            _context.ExportBindingRegistry.OnExportGroupChanged,
+            _context.OnExportGroupChanged,
             _context.EmitNetGuidExported).Read();
 
         new StreamingLevelFixesReader(_context, _archive).Read();

@@ -24,7 +24,8 @@ internal sealed class ReplayReaderContext : IDisposable
         ILoggerFactory? loggerFactory = null,
         NetGuidCache? netGuidCache = null,
         ReplayDiagnosticCollector? diagnostics = null,
-        ReplayReleaseVersion? replayReleaseVersion = null)
+        ReplayReleaseVersion? replayReleaseVersion = null,
+        IReadOnlySet<string>? playerControllerPaths = null)
     {
         Archive = archive;
         BunchPayloadStats = new BunchPayloadStats();
@@ -34,6 +35,7 @@ internal sealed class ReplayReaderContext : IDisposable
         Diagnostics = diagnostics ?? new ReplayDiagnosticCollector();
         NetGuidCache = netGuidCache ?? new NetGuidCache();
         ReplayReleaseVersion = replayReleaseVersion;
+        PlayerControllerPaths = playerControllerPaths;
         ExportBindingRegistry = new ExportBindingRegistry(descriptorCatalog, ParseProfile, replayReleaseVersion);
         BunchPayloadPipeline = new BunchPayloadPipeline(this);
     }
@@ -44,6 +46,7 @@ internal sealed class ReplayReaderContext : IDisposable
     public ReplayHeader ReplayHeader { get; set; } = new();
     public ReplayVersion ReplayVersion { get; set; } = new() { Branch = string.Empty };
     public ReplayReleaseVersion? ReplayReleaseVersion { get; }
+    public IReadOnlySet<string>? PlayerControllerPaths { get; }
     public UEVersion UEVersion { get; set; } = new();
     public FBinaryArchive ReplayDataStream { get; set; } = new(ReadOnlyMemory<byte>.Empty);
     public NetGuidCache NetGuidCache { get; }
@@ -56,6 +59,14 @@ internal sealed class ReplayReaderContext : IDisposable
 
     internal void EmitNetGuidExported(uint netGuid, string path, NetworkGuid outerNetGuid) =>
         EventSink.Emit(new NetGuidExported(CurrentTimeSeconds, CurrentPacketId, netGuid, path, outerNetGuid.Value));
+
+    internal void OnExportGroupChanged(NetFieldExportGroup group)
+    {
+        ExportBindingRegistry.OnExportGroupChanged(group);
+        if (!ParseProfile.EmitRawPayloads) return;
+        EventSink.Emit(new NetFieldExportGroupChanged(CurrentTimeSeconds, CurrentPacketId, group.PathName,
+            group.PathNameIndex, group.NetFieldExports.Select(field => field?.Name).ToArray()));
+    }
     public Dictionary<uint, ActorChannelState> ChannelStates { get; } = [];
     public List<ActorChannelState> ActorChannelOpens { get; } = [];
     public BunchPayloadPipeline BunchPayloadPipeline { get; }
