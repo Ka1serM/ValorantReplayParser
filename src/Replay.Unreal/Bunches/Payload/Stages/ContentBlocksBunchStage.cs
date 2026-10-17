@@ -14,11 +14,6 @@ internal sealed class ContentBlocksBunchStage : IBunchPayloadStage
 
     public BunchStageResult Process(ref BunchPayloadContext context)
     {
-        if (context.Payload.AtEnd)
-        {
-            return BunchStageResult.Continue;
-        }
-
         if (context.Channel is null)
         {
             context.Payload.SkipRemaining();
@@ -27,13 +22,16 @@ internal sealed class ContentBlocksBunchStage : IBunchPayloadStage
 
         try
         {
-            _contentBlockFramer.FrameContentBlocks(
-                context.Payload,
-                context.Channel,
-                context.Stats,
-                context.ReaderContext.CurrentTimeSeconds,
-                context.Header.PacketId,
-                context.ReaderContext.ReplayVersion.Branch);
+            if (!context.Payload.AtEnd)
+                _contentBlockFramer.FrameContentBlocks(
+                    context.Payload,
+                    context.Channel,
+                    context.Stats,
+                    context.ReaderContext.CurrentTimeSeconds,
+                    context.Header.PacketId,
+                    context.ReaderContext.ReplayVersion.Branch);
+            _contentBlockFramer.CompleteRawBunch(context.Channel, context.ReaderContext.CurrentTimeSeconds,
+                context.Header.PacketId);
             return BunchStageResult.Continue;
         }
         catch (ArchiveReadException exception)

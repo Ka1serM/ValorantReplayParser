@@ -25,6 +25,7 @@ internal sealed class ContentBlockFramer
     private readonly ILoggerFactory? _loggerFactory;
     private readonly ReplayDiagnosticCollector? _diagnostics;
     private readonly ReplayReleaseVersion? _replayReleaseVersion;
+    private const string ClassNetCacheFieldsReason = "Class net cache fields";
     private readonly bool _emitRawPayloads;
 
     public ContentBlockFramer(
@@ -163,11 +164,17 @@ internal sealed class ContentBlockFramer
             : _pathResolver.ResolveClassPath(header, channel);
         EmitRawBlock(header, channel, timeSeconds, packetId, path);
         using var decoded = DecodeContentPayload(payload, payloadBits, channel, replayVersionBranch);
-        if (header.HasRepLayout)
-            FrameRawProperties(decoded, header, channel, timeSeconds, packetId, path);
-        else
-            FrameRawRpcs(decoded, header, channel, timeSeconds, packetId, path);
+        if (header.HasRepLayout) FrameRawProperties(decoded, header, channel, timeSeconds, packetId, path);
+        // FObjectReplicator::ReceivedBunch reads the class net cache fields (custom delta properties and RPCs) after the
+        // RepLayout properties. Their handles index the export group of the object's class, which the consumer knows.
+        EmitUnframedRemainder(decoded, header, channel, timeSeconds, packetId, path, header.HasRepLayout, ClassNetCacheFieldsReason);
         stats.ContentPayloadBitsParsed += decoded.BitLength;
+    }
+
+    public void CompleteRawBunch(ActorChannelState channel, float timeSeconds, int packetId)
+    {
+        if (!_emitRawPayloads) return;
+        _eventSink.Emit(new RawBunchCompleted(timeSeconds, packetId, channel.ChannelIndex, channel.ActorNetGuid.Value));
     }
 
     private void EmitRawBlock(ContentBlockHeader header, ActorChannelState channel, float timeSeconds, int packetId,
@@ -184,12 +191,7 @@ internal sealed class ContentBlockFramer
         while (!payload.AtEnd)
         {
             var encodedHandle = payload.ReadIntPacked();
-            if (encodedHandle == 0)
-            {
-                EmitUnframedRemainder(payload, header, channel, timeSeconds, packetId, path, true,
-                    "RepLayout custom delta or trailing payload");
-                return;
-            }
+            if (encodedHandle == 0) return;
 
             var handle = checked((int)(encodedHandle - 1));
             var bitCount = checked((int)payload.ReadIntPacked());
@@ -198,51 +200,6 @@ internal sealed class ContentBlockFramer
             _eventSink.Emit(new RawFieldReceived(timeSeconds, packetId, channel.ChannelIndex,
                 channel.ActorNetGuid.Value, GetObjectNetGuid(header, channel).Value, path, handle, name, bytes, bitCount));
         }
-    }
-
-    private void FrameRawRpcs(FBitArchive payload, ContentBlockHeader header, ActorChannelState channel,
-        float timeSeconds, int packetId, string? path)
-    {
-        if (path is null || !_netGuidCache.ExportGroupsByPath.TryGetValue(path, out var group))
-        {
-            EmitUnframedRemainder(payload, header, channel, timeSeconds, packetId, path, false,
-                "Class net cache export group is unavailable");
-            return;
-        }
-
-        var handleLimit = checked((int)Math.Max(group.NetFieldExportsLength, 2));
-        var invocations = new List<RawRpcReceived>();
-        RawUnframedPayloadReceived? trailing = null;
-        try
-        {
-            while (!payload.AtEnd)
-            {
-                var handle = checked((int)payload.ReadSerializedInt(handleLimit));
-                if (payload.BitsRemaining < 8)
-                {
-                    var remainingBits = checked((int)payload.BitsRemaining);
-                    trailing = new RawUnframedPayloadReceived(timeSeconds, packetId, channel.ChannelIndex,
-                        channel.ActorNetGuid.Value, GetObjectNetGuid(header, channel).Value, path, false,
-                        "Class net cache trailing bits", payload.ReadBits(remainingBits).ToArray(), remainingBits);
-                    break;
-                }
-
-                var bitCount = checked((int)payload.ReadIntPacked());
-                var bytes = payload.ReadBits(bitCount).ToArray();
-                var name = (uint)handle < group.NetFieldExportsLength ? group.NetFieldExports[handle]?.Name : null;
-                invocations.Add(new RawRpcReceived(timeSeconds, packetId, channel.ChannelIndex,
-                    channel.ActorNetGuid.Value, GetObjectNetGuid(header, channel).Value, path, handle, name, bytes, bitCount));
-            }
-        }
-        catch (Exception exception) when (exception is ArchiveReadException or OverflowException)
-        {
-            payload.SeekBits(0);
-            EmitUnframedRemainder(payload, header, channel, timeSeconds, packetId, path, false,
-                "Class net cache function framing is unsupported");
-            return;
-        }
-        foreach (var invocation in invocations) _eventSink.Emit(invocation);
-        if (trailing is not null) _eventSink.Emit(trailing);
     }
 
     private void EmitUnframedRemainder(FBitArchive payload, ContentBlockHeader header, ActorChannelState channel,

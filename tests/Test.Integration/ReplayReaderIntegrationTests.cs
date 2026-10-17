@@ -127,7 +127,8 @@ public class ReplayReaderIntegrationTests
             Assert.That(eventSink.GroupCount, Is.GreaterThan(0));
             Assert.That(eventSink.BlockCount, Is.GreaterThan(0));
             Assert.That(eventSink.FieldCount, Is.GreaterThan(0));
-            Assert.That(eventSink.RpcCount, Is.GreaterThan(0));
+            Assert.That(eventSink.ClassNetCacheCount, Is.GreaterThan(0));
+            Assert.That(eventSink.BunchCount, Is.GreaterThan(0));
             Assert.That(eventSink.ActorCount, Is.GreaterThan(0));
         });
     }
@@ -395,7 +396,8 @@ public class ReplayReaderIntegrationTests
         public int GroupCount { get; private set; }
         public int BlockCount { get; private set; }
         public int FieldCount { get; private set; }
-        public int RpcCount { get; private set; }
+        public int ClassNetCacheCount { get; private set; }
+        public int BunchCount { get; private set; }
         public int ActorCount { get; private set; }
 
         public void Emit(ReplayEvent replayEvent)
@@ -405,7 +407,8 @@ public class ReplayReaderIntegrationTests
                 case NetFieldExportGroupChanged: GroupCount++; break;
                 case RawContentBlockReceived: BlockCount++; break;
                 case RawFieldReceived: FieldCount++; break;
-                case RawRpcReceived: RpcCount++; break;
+                case RawUnframedPayloadReceived: ClassNetCacheCount++; break;
+                case RawBunchCompleted: BunchCount++; break;
                 case ActorSpawned: ActorCount++; break;
             }
         }
