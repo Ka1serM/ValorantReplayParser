@@ -18,4 +18,5 @@ public sealed class ReplayInfo
     public int HeaderChunkIndex { get; set; } = NoChunkIndex;
     public List<ReplayChunkInfo> Chunks { get; } = [];
     public List<ReplayDataChunkInfo> DataChunks { get; } = [];
+    public List<ReplayEventInfo> Events { get; } = [];
 }

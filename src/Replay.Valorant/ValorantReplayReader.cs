@@ -399,6 +399,17 @@ public sealed class ValorantReplayReader
             ReplayDataOffset = chunk.ReplayDataOffset,
             StreamOffset = chunk.StreamOffset,
         }));
+        info.Events.AddRange(sourceInfo.Events.Select(item => new ReplayEventInfo
+        {
+            ChunkIndex = item.ChunkIndex,
+            Id = item.Id,
+            Group = item.Group,
+            Metadata = item.Metadata,
+            Time1 = item.Time1,
+            Time2 = item.Time2,
+            SizeInBytes = item.SizeInBytes,
+            EventDataOffset = item.EventDataOffset,
+        }));
 
         var serialization = new ReplayInfoSerializationMetadata
         {

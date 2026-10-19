@@ -150,7 +150,7 @@ internal sealed class ReplayChunkDispatcher
                 logger.LogDebug("Skipping checkpoint chunk {ChunkIndex}.", chunkIndex);
                 break;
             case ReplayChunkType.Event:
-                logger.LogDebug("Skipping event chunk {ChunkIndex}.", chunkIndex);
+                DispatchEvent(context, chunkIndex, chunkArchive, chunk.DataOffset);
                 break;
             case ReplayChunkType.ReplayData:
                 DispatchReplayData(context, chunkIndex, chunkArchive, chunk.DataOffset);
@@ -177,6 +177,34 @@ internal sealed class ReplayChunkDispatcher
         context.ReplayHeader = result.Header;
         context.ReplayVersion = result.ReplayVersion;
         context.UEVersion = result.UEVersion;
+    }
+
+    // FLocalFileNetworkReplayStreamer::ReadReplayInfo, ELocalFileChunkType::Event.
+    private static void DispatchEvent(ReplayReaderContext context, int chunkIndex, FBinaryArchive chunkArchive,
+        long chunkDataOffset)
+    {
+        var id = chunkArchive.ReadFString();
+        var group = chunkArchive.ReadFString();
+        var metadata = chunkArchive.ReadFString();
+        var time1 = chunkArchive.ReadUInt32();
+        var time2 = chunkArchive.ReadUInt32();
+        var size = chunkArchive.ReadInt32();
+        if (size < 0 || chunkArchive.Position + size > chunkArchive.Length)
+        {
+            throw new InvalidReplayDataException($"Event chunk {chunkIndex} declares an invalid data size {size}.");
+        }
+
+        context.ReplayInfo.Events.Add(new ReplayEventInfo
+        {
+            ChunkIndex = chunkIndex,
+            Id = id,
+            Group = group,
+            Metadata = metadata,
+            Time1 = time1,
+            Time2 = time2,
+            SizeInBytes = size,
+            EventDataOffset = chunkDataOffset + chunkArchive.Position,
+        });
     }
 
     private void DispatchReplayData(
