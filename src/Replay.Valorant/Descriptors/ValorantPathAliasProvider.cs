@@ -25,6 +25,21 @@ internal sealed class ValorantPathAliasProvider : IReplayPathAliasProvider
             return isCache ? SequoiaDescriptors.ArenaCoverPath + cacheSuffix : SequoiaDescriptors.ArenaCoverPath;
         }
 
+        // Swiftplay's game states and player state are Blueprint children of BombGameState and BombPlayerState: they
+        // replicate the parent's fields by the same names.
+        if (classPath is
+            "/Game/GameModes/_Development/Swiftplay_EndOfRoundCredits/Swiftplay_EoRCredits_GameState.Swiftplay_EoRCredits_GameState_C" or
+            "/Game/GameModes/_Development/Swiftplay_EndOfRoundCredits/EOR5RoundHalf/Swiftplay_EoRCredits5RH_GameState.Swiftplay_EoRCredits5RH_GameState_C")
+        {
+            const string bombGameState = "/Game/GameModes/Bomb/BombGameState.BombGameState_C";
+            return isCache ? bombGameState + cacheSuffix : bombGameState;
+        }
+        if (classPath == "/Game/GameModes/_Development/Swiftplay_EndOfRoundCredits/Swiftplay_EoRCredits_PlayerState.Swiftplay_EoRCredits_PlayerState_C")
+        {
+            const string bombPlayerState = "/Game/GameModes/Bomb/BombPlayerState.BombPlayerState_C";
+            return isCache ? bombPlayerState + cacheSuffix : bombPlayerState;
+        }
+
         const string coreSegment = "/_Core/";
         const string charactersRoot = "/Game/Characters/";
 
